@@ -31,7 +31,9 @@ io.on('connection', (socket) => {
     socket.emit("location", "/");
 
     socket.on('disconnect', () => {
-        players = players.toSpliced(socket.id, 1);
+        //Ne fonctionne pas sur Render :(
+        //players = players.toSpliced(socket.id, 1);
+        players = players.splice(socket.id, 1);
         console.log('Player number: ', players.length);
     });
 
