@@ -1,0 +1,13 @@
+{
+  "name": "PenaltyShootoutGame",
+  "version": "0.0.1",
+  "description": "PenaltyShootoutGame using Node.js, Express, and Socket.io",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "@types/socket.io-client": "^3.0.0"
+  }
+}
