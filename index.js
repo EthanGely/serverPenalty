@@ -4,6 +4,8 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { log } from 'node:console';
 import { SocketAddress } from 'node:net';
+import { serialize } from 'node:v8';
+import e from 'express';
 
 const app = express();
 const server = createServer(app);
@@ -21,6 +23,8 @@ const maxShoots = 5;
 let rounds = 1;
 let shoots = 0;
 
+let pointsManche = [];
+
 app.use(cors());
 
 app.get('/', (req, res) => {
@@ -31,20 +35,56 @@ io.on('connection', (socket) => {
     socket.emit("location", "/");
 
     socket.on('disconnect', () => {
-        //Ne fonctionne pas sur Render :(
-        //players = players.toSpliced(socket.id, 1);
-        players = players.splice(socket.id, 1);
+        // Find the index of the player with the socketId
+        const playerIndex = players.findIndex(player => player.socketId === socket.id);
+        
+        // If the player exists, remove it from the players array
+        if (playerIndex !== -1) {
+            players.splice(playerIndex, 1);
+        }
+        
         console.log('Player number: ', players.length);
     });
 
+    socket.on("gamePad", (gamepadsPlayer, ipAddr) => {
+        if (gamepadsPlayer >= 0 && ipAddr) {
+            const player = players.find(player => player.socketId == socket.id);
+
+            // Check if the player exists
+            if (player) {
+                // If the player has no ip address, save it
+                if (player.ipAddr === null) {
+                    player.ipAddr = ipAddr;
+                }
+
+                // A Player who has the same ip and same controller, but different socket (local)
+                const playerController = players.find(player => player.gamepadId === gamepadsPlayer && player.ipAddr === ipAddr && player.socketId !== socket.id);
+
+                // if such a player does not exist, and the current player has no gamepad, save it.
+                if (!playerController && player.gamepadId === null) {
+                    player.gamepadId = gamepadsPlayer;
+                    socket.emit("gamePadID", player.gamepadId);
+                    return;
+                }
+                if (player.gamepadId === null) {
+                    socket.emit("gamePadID", -1);
+                    return;
+                } else {
+                    socket.emit("gamePadID", player.gamepadId);
+                    return;
+                }
+            }
+        }
+        });
+
     socket.on('playerName', (playerName) => {
         // Check if player already exists
-        const existingPlayer = players.find(player => player.sockerId == socket.id);
+        const existingPlayer = players.find(player => player.socketId == socket.id);
 
         if (!existingPlayer) {
             // If player does not exist, save its socket.id and given name
-            players = [...players, { socketId : socket.id, name: playerName, score: 0, shoot: -1, points: 0 }];
-            console.log('Player number: ', players.length);
+            players = [...players, { socketId: socket.id, name: playerName, score: 0, shoot: -1, points: 0, ipAddr: null, gamepadId: null }];
+            pointsManche[socket.id] = Array(maxRounds).fill().map(() => Array(maxShoots).fill(null));
             socket.emit('waiting', true);
         }
 
@@ -60,21 +100,16 @@ io.on('connection', (socket) => {
                 console.log(player.socketId, "is", roles[index])
             });
         }
-
-        console.log('players: ', players);
     });
 
-    socket.on("getRole", () => {
-        const existingPlayer = players.find(player => player.socketId == socket.id);
-        if (existingPlayer) {
-            socket.emit("role", existingPlayer.role);
-            players.forEach((player) => {
-                const otherPlayer = players.find(p => p !== player);
-                io.to(player.socketId).emit('scoreUpdate', player.name + " (You) : " + player.score + " - " + otherPlayer.score + " : "+ otherPlayer.name);
-                io.to(player.socketId).emit('shootUpdate', shoots, maxShoots, rounds, maxRounds, null, null);
-            });
+    socket.on("getInfos", () => {
+        const player = players.find(player => player.socketId == socket.id);
+        if (player) {
+            let role = player.role == "goalkeeper" ? true : false;
+            const otherPlayer = players.find(p => p !== player);
+            socket.emit("infos", role, maxShoots, maxRounds, player.name + ' - ' + otherPlayer.name, null);
         }
-        
+
     })
 
     // When a player shoots
@@ -97,7 +132,7 @@ io.on('connection', (socket) => {
                 socket.emit("posShoot", index);
 
                 // if the current player is the goalKeeper
-                if(currentPlayer.role == "goalkeeper") {
+                if (currentPlayer.role == "goalkeeper") {
                     // Move the goalKeeper to the correct position
                     socket.emit("posGoalkeeper", index);
                 }
@@ -105,15 +140,20 @@ io.on('connection', (socket) => {
                 // Check if all players shooted / defended
                 const allPlayersShot = players.every(player => player.shoot !== -1);
                 if (allPlayersShot) {
-                    // If so, add a shot
-                    shoots++;
 
                     // Check who wins and add a point
                     if (goalkeeper.shoot === striker.shoot) {
-                        goalkeeper.score += 1;
+                        pointsManche[goalkeeper.socketId][rounds - 1][shoots] = true;
+                        pointsManche[striker.socketId][rounds - 1][shoots] = false;
+                        goalkeeper.score++;
                     } else {
-                        striker.score += 1;
+                        pointsManche[striker.socketId][rounds - 1][shoots] = true;
+                        pointsManche[goalkeeper.socketId][rounds - 1][shoots] = false;
+                        striker.score++;
                     }
+
+                    // Then add a shoot
+                    shoots++;
 
                     // Then, reset positions after 2 seconds
                     setTimeout(() => {
@@ -126,40 +166,49 @@ io.on('connection', (socket) => {
                         shoots = 0;
                         // And add a round
                         rounds++;
-        
+
                         // Check who wins the previous round and add points accordingly
-                        if (goalkeeper.score >= striker.score) {
+                        if (goalkeeper.score > striker.score) {
                             goalkeeper.points += 2;
-                        } if (striker.score >= goalkeeper.score) {
+                        } else if (striker.score > goalkeeper.score) {
                             striker.points += 1;
                         }
 
                         // Reinit scores for next round
                         goalkeeper.score = 0;
                         striker.score = 0;
-        
+
                         // Swith roles
                         players.forEach((player) => {
+                            let role;
                             if (player.role == "goalkeeper") {
                                 player.role = "striker";
+                                role = false;
                             } else {
                                 player.role = "goalkeeper";
+                                role = true;
                             }
-        
-                            io.to(player.socketId).emit('role', player.role);
+
+                            io.to(player.socketId).emit('infos', role, null, null, null, pointsManche[player.socketId][rounds]);
                         });
                     }
 
-                    // Update game
+                    // Update game infos
+
                     players.forEach((player) => {
+
                         // Other player
                         const otherPlayer = players.find(p => p !== player);
+
+                        let totalPoints = player.points + " - " + otherPlayer.points;
+
                         // Update score of the current round
-                        io.to(player.socketId).emit('scoreUpdate', player.name + "(You) : " + player.score + " - " + otherPlayer.score + " : "+ otherPlayer.name);
+                        io.to(player.socketId).emit('scoreUpdate', pointsManche[player.socketId][rounds - 1]);
                         // Update shoot number, and round number
-                        io.to(player.socketId).emit('shootUpdate', shoots, maxShoots, rounds, maxRounds, striker.shoot, goalkeeper.shoot);
+                        io.to(player.socketId).emit('shootUpdate', rounds, totalPoints, striker.shoot, goalkeeper.shoot);
                     });
-                    
+
+
                     // Reinit shoot / defense position
                     players.forEach(player => player.shoot = -1);
                 } else {
