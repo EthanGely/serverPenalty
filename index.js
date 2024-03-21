@@ -18,8 +18,8 @@ const io = new Server(server, {
 
 let players = [];
 
-const maxRounds = 4;
-const maxShoots = 5;
+const maxRounds = 2;
+const maxShoots = 2;
 let rounds = 1;
 let shoots = 0;
 
@@ -37,12 +37,12 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         // Find the index of the player with the socketId
         const playerIndex = players.findIndex(player => player.socketId === socket.id);
-        
+
         // If the player exists, remove it from the players array
         if (playerIndex !== -1) {
             players.splice(playerIndex, 1);
         }
-        
+
         console.log('Player number: ', players.length);
     });
 
@@ -75,7 +75,7 @@ io.on('connection', (socket) => {
                 }
             }
         }
-        });
+    });
 
     socket.on('playerName', (playerName) => {
         // Check if player already exists
@@ -119,7 +119,7 @@ io.on('connection', (socket) => {
         const striker = players.find(player => player.role === 'striker');
 
         // if there are still rounds left
-        if (rounds <= maxRounds) {
+        if (rounds <= maxRounds && shoots < maxShoots) {
 
             // we find the current player
             const currentPlayer = players.find(player => player.socketId == socket.id);
@@ -208,6 +208,34 @@ io.on('connection', (socket) => {
                         io.to(player.socketId).emit('shootUpdate', rounds, totalPoints, striker.shoot, goalkeeper.shoot);
                     });
 
+                    if (rounds > maxRounds) {
+                        // Calculate points for each player
+                        let playerPoints = players.map(player => {
+                            return {
+                                socketId: player.socketId,
+                                points: player.points
+                            };
+                        });
+
+                        // Sort players by points
+                        playerPoints.sort((a, b) => b.points - a.points);
+
+                        // Send "winner" or "loser" to each player
+                        players.forEach(player => {
+                            if (player.socketId === playerPoints[0].socketId) {
+                                io.to(player.socketId).emit('endGame', true);
+                            } else {
+                                io.to(player.socketId).emit('endGame', false);
+                            }
+                        });
+
+                        players = [];
+                        rounds = 1;
+                        shoots = 0;
+                        pointsManche = [];
+                        return;
+                    }
+
 
                     // Reinit shoot / defense position
                     players.forEach(player => player.shoot = -1);
@@ -222,6 +250,26 @@ io.on('connection', (socket) => {
         } else {
             // End of the game
             //console.log("max number of rounds, end of game");
+
+            // Calculate points for each player
+            let playerPoints = players.map(player => {
+                return {
+                    socketId: player.socketId,
+                    points: player.points
+                };
+            });
+
+            // Sort players by points
+            playerPoints.sort((a, b) => b.points - a.points);
+
+            // Send "winner" or "loser" to each player
+            players.forEach(player => {
+                if (player.socketId === playerPoints[0].socketId) {
+                    io.to(player.socketId).emit('endGame', true);
+                } else {
+                    io.to(player.socketId).emit('endGame', false);
+                }
+            });
         }
     })
 });
