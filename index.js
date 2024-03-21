@@ -18,8 +18,8 @@ const io = new Server(server, {
 
 let players = [];
 
-const maxRounds = 2;
-const maxShoots = 2;
+const maxRounds = 4;
+const maxShoots = 5;
 let rounds = 1;
 let shoots = 0;
 
